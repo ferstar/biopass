@@ -28,9 +28,10 @@ class FaceRecognition {
   FaceRecognition(const ModelBytes& model, int imgsz = 112, const float threshold = 0.50);
 
   MatchResult match(const ImageRGB& image1, const ImageRGB& image2);
+  // Raw embedding; callers that keep templates compare embeddings themselves.
+  std::vector<float> inference(const ImageRGB& image);
 
  private:
-  std::vector<float> inference(const ImageRGB& image);
   std::vector<float> preprocess(const ImageRGB& image);
 
   float threshold;

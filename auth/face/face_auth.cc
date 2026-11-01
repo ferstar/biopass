@@ -89,18 +89,20 @@ bool FaceAuth::ensureModelsLoaded() {
   }
 
   // Model paths come from the user's registry: load them as the user.
-  detector_ = loadModel<FaceDetection>("detection", username_, detectModel->path, 640,
-                                       face_config_.detection.threshold);
   if (!detector_) {
-    return false;
+    detector_ = loadModel<FaceDetection>("detection", username_, detectModel->path, 640,
+                                         face_config_.detection.threshold);
+    if (!detector_) {
+      return false;
+    }
+    spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
+                  face_config_.detection.threshold);
   }
-  spdlog::debug("FaceAuth: Detection model loaded | threshold={:.3f}",
-                face_config_.detection.threshold);
 
   recognizer_ = loadModel<FaceRecognition>("recognition", username_, recogModel->path, 112,
                                            face_config_.recognition.threshold);
   if (!recognizer_) {
-    detector_.reset();
+    if (!shared_detector_) detector_.reset();
     return false;
   }
   spdlog::debug("FaceAuth: Recognition model loaded | threshold={:.3f}",

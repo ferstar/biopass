@@ -25,15 +25,19 @@ class FaceAuth : public IAuthMethod {
 
   // One sqlite connection per auth session, reused for every model_id lookup.
   // open_camera: openCameraSession() unless a test passes a fake.
+  // detector: lets a long-running caller share its already-loaded detector; it
+  // must use config.detection.threshold. Null loads one on demand.
   FaceAuth(const FaceMethodConfig& config, const std::string& username,
-           CameraOpener open_camera = nullptr)
+           CameraOpener open_camera = nullptr, std::shared_ptr<FaceDetection> detector = nullptr)
       : face_config_(config),
         username_(username),
         model_registry_(username),
         open_camera_(open_camera ? std::move(open_camera)
                                  : [](const std::optional<std::string>& device_path) {
                                      return openCameraSession(device_path);
-                                   }) {}
+                                   }),
+        detector_(std::move(detector)),
+        shared_detector_(detector_ != nullptr) {}
   ~FaceAuth() override = default;
 
   std::string name() const override { return "Face"; }
@@ -64,7 +68,8 @@ class FaceAuth : public IAuthMethod {
   // Opened by isAvailable() (hence mutable) and kept for the auth session.
   mutable std::unique_ptr<ICameraCaptureSession> camera_session_;
   std::unique_ptr<ICameraCaptureSession> ir_camera_session_;
-  std::unique_ptr<FaceDetection> detector_;
+  std::shared_ptr<FaceDetection> detector_;
+  bool shared_detector_ = false;
   std::unique_ptr<FaceRecognition> recognizer_;
   // Loaded by the first anti-spoofing check and kept, like detector_ and
   // recognizer_, for this object's lifetime (one helper run).
