@@ -12,6 +12,7 @@ import { useModelFileStatus } from "@/hooks/useModelFileStatus";
 import type { BiopassConfig, Model, VideoDeviceInfo } from "@/types/config";
 import { Threshold } from "../methods/shared/Threshold";
 import { DISABLED_OPTION, selectValueFor } from "./selectValue";
+import { listedDevicePath } from "./useVideoDevices";
 
 const UNAVAILABLE_AI_MODEL_OPTION = "__unavailable_ai_model__";
 const UNAVAILABLE_IR_DEVICE_OPTION = "__unavailable_ir_device__";
@@ -39,7 +40,7 @@ export function AntiSpoofingSection({ antiSpoofModels, videoDevices }: Props) {
     UNAVAILABLE_AI_MODEL_OPTION,
   );
   const irCameraValue = selectValueFor(
-    antiSpoofing.ir_camera || null,
+    listedDevicePath(antiSpoofing.ir_camera || null, videoDevices),
     videoDevices.map((device) => device.path),
     UNAVAILABLE_IR_DEVICE_OPTION,
   );

@@ -235,6 +235,7 @@ export type StrategyConfig_Serialize = {
 
 export type VideoDeviceInfo = {
 	path: string,
+	node: string,
 	name: string,
 	display_name: string,
 };

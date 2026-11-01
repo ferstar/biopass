@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/select";
 import type { BiopassConfig, VideoDeviceInfo } from "@/types/config";
 import { DISABLED_OPTION, selectValueFor } from "./selectValue";
+import { listedDevicePath } from "./useVideoDevices";
 
 const UNAVAILABLE_CAMERA_DEVICE_OPTION = "__unavailable_camera_device__";
 
@@ -23,7 +24,7 @@ export function CameraDeviceSection({ videoDevices }: Props) {
   });
 
   const cameraValue = selectValueFor(
-    camera || null,
+    listedDevicePath(camera || null, videoDevices),
     videoDevices.map((device) => device.path),
     UNAVAILABLE_CAMERA_DEVICE_OPTION,
   );

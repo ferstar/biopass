@@ -4,6 +4,7 @@ use std::fs;
 #[derive(Debug, Serialize, Clone, specta::Type)]
 pub struct VideoDeviceInfo {
     pub path: String,
+    pub node: String,
     pub name: String,
     pub display_name: String,
 }
@@ -34,6 +35,25 @@ fn video_device_sort_key(path: &str) -> i32 {
         .unwrap_or(-1)
 }
 
+// /dev/videoN numbering follows probe order and can swap between boots, so
+// prefer a udev alias that is tied to the physical port (or the device id).
+fn stable_video_path(node: &str) -> String {
+    let target = fs::canonicalize(node).unwrap_or_else(|_| node.into());
+    for dir in ["/dev/v4l/by-path", "/dev/v4l/by-id"] {
+        let Ok(entries) = fs::read_dir(dir) else { continue };
+        let mut aliases: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|alias| fs::canonicalize(alias).ok().as_ref() == Some(&target))
+            .collect();
+        aliases.sort();
+        if let Some(alias) = aliases.first() {
+            return alias.to_string_lossy().into_owned();
+        }
+    }
+    node.to_string()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
@@ -46,24 +66,26 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
             continue;
         }
 
-        let path = format!("/dev/{}", file_name);
+        let node = format!("/dev/{}", file_name);
+        let path = stable_video_path(&node);
         let name = fs::read_to_string(format!("/sys/class/video4linux/{}/name", file_name))
             .map(|value| value.trim().to_string())
             .unwrap_or_default();
         let display_name = if name.is_empty() {
-            path.clone()
+            node.clone()
         } else {
-            format!("{} ({})", name, path)
+            format!("{} ({})", name, node)
         };
 
         devices.push(VideoDeviceInfo {
             path,
+            node,
             name,
             display_name,
         });
     }
 
-    devices.sort_by_key(|a| video_device_sort_key(&a.path));
+    devices.sort_by_key(|a| video_device_sort_key(&a.node));
 
     Ok(devices)
 }
