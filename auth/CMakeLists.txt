@@ -38,6 +38,11 @@ add_subdirectory(face)
 add_subdirectory(fingerprint)
 add_subdirectory(pam)
 
+option(BIOPASS_PRESENCE "Build biopass-presence (Wayland walk-away lock)" OFF)
+if(BIOPASS_PRESENCE)
+    add_subdirectory(presence)
+endif()
+
 # Shipped next to the bundled onnxruntime and libcamera in /usr/lib/biopass
 # (tauri.conf.json): find them there, not through a global ld.so.conf.d entry.
 set_target_properties(biopass_det biopass_reg biopass_as PROPERTIES
