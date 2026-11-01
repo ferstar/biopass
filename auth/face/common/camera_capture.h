@@ -30,6 +30,10 @@ class ICameraCaptureSession {
   virtual ~ICameraCaptureSession() = default;
   virtual bool isOpen() const = 0;
   virtual ImageRGB capture() = 0;
+  // The next frame in stream order, without warmup or brightest-of-N
+  // sampling, so consecutive calls see the IR emitter's lit/dark alternation.
+  // Defaults to capture() for sessions that don't stream.
+  virtual ImageRGB nextFrame() { return capture(); }
 };
 
 std::unique_ptr<ICameraCaptureSession> openCameraSession(

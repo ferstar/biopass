@@ -403,6 +403,31 @@ class LibcameraCaptureSession : public ICameraCaptureSession {
     return best;
   }
 
+  ImageRGB nextFrame() override {
+    if (!isOpen()) {
+      return {};
+    }
+    const bool has_timeout = capture_timeout_ms_ > 0;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::max(0, capture_timeout_ms_));
+    for (int dropped = 0; dropped < kMaxDroppedFrames; ++dropped) {
+      libcamera::Request* request = waitForRequest(deadline, has_timeout);
+      if (!request) {
+        return {};
+      }
+      ImageRGB image;
+      const bool ok = frameSucceeded(request) && extractFrame(request, image);
+      if (!requeue(request)) {
+        close();
+        return {};
+      }
+      if (ok) {
+        return image;
+      }
+    }
+    return {};
+  }
+
  private:
   LibcameraCaptureSession(std::shared_ptr<libcamera::CameraManager> manager,
                           std::shared_ptr<libcamera::Camera> camera,
