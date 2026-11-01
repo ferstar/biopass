@@ -45,6 +45,7 @@ struct Options {
   std::string model;
   int idle_s = 15;    // input idle before the camera starts watching
   int absent_s = 30;  // no face for this long while idle -> lock
+  int rearm_s = 10;   // after a manual lock, no face this long arms auto-unlock
   // KDE only starts its own biopass attempt once the lock screen is woken, so
   // probe right away after locking and back off only after waking it.
   int retry_after_fail_s = 5;
@@ -303,6 +304,8 @@ int main(int argc, char** argv) {
       opt.idle_s = std::stoi(value);
     else if (key == "--absent")
       opt.absent_s = std::stoi(value);
+    else if (key == "--rearm")
+      opt.rearm_s = std::stoi(value);
     else if (key == "--ir-camera")
       opt.ir_camera = value;
     else {
@@ -387,16 +390,27 @@ int main(int argc, char** argv) {
   Watcher watcher(opt, detector);
   log("ready: idle=%ds absent=%ds ir_camera=%s", opt.idle_s, opt.absent_s, opt.ir_camera.c_str());
 
-  enum class State { Active, Watching, Locked } state = State::Active;
+  // Active:   user is typing; camera off.
+  // Watching: input idle; sparse IR probes, lock after absent_s without a face.
+  // Locking:  Lock requested; waiting for the screensaver to report it.
+  // Locked:   screen locked. Auto-unlock is armed when we locked it because
+  //           the user left. For a manual (or compositor) lock the user is
+  //           usually still in front of the camera, so it arms only after no
+  //           face has been seen for rearm_s: the user really walked away.
+  enum class State { Active, Watching, Locking, Locked } state = State::Active;
+  bool armed = false;
+  bool was_seen = false;
   auto last_face = Clock::now();
   auto locked_since = Clock::now();
+  auto lock_requested = Clock::now();
   auto next_locked_probe = Clock::now();
   const int fd = wl_display_get_fd(idle.display);
 
   for (;;) {
     wl_display_flush(idle.display);
+    const int timeout = state == State::Watching ? 3000 : state == State::Active ? 500 : 100;
     pollfd pfd{fd, POLLIN, 0};
-    if (poll(&pfd, 1, state == State::Watching ? 3000 : state == State::Locked ? 100 : 500) > 0) {
+    if (poll(&pfd, 1, timeout) > 0) {
       if (wl_display_dispatch(idle.display) < 0) {
         log("wayland connection lost");
         return 1;
@@ -412,52 +426,79 @@ int main(int argc, char** argv) {
     if (locked) {
       if (state != State::Locked) {
         watcher.release();
+        armed = state == State::Locking;
         state = State::Locked;
         locked_since = now;
+        last_face = now;
         next_locked_probe = now;
-        log("locked");
+        if (armed)
+          log("locked (walked away); auto-unlock armed");
+        else
+          log("locked manually; auto-unlock waits for %ds without a face", opt.rearm_s);
       }
-      // Probe sparsely; open/close the camera each time so the lock screen's
-      // own biopass PAM can grab it.
-      if (now >= next_locked_probe) {
-        const bool streaming = now - locked_since < seconds(opt.locked_stream_s);
-        next_locked_probe =
-            now + milliseconds(streaming ? opt.locked_period_ms : opt.sparse_period_ms);
-        if (!streaming)
+      if (now < next_locked_probe)
+        continue;
+      const bool streaming = now - locked_since < seconds(opt.locked_stream_s);
+      next_locked_probe =
+          now + milliseconds(streaming ? opt.locked_period_ms : opt.sparse_period_ms);
+      // Stay open on a face so verification captures from the same session.
+      const bool seen = watcher.faceVisible(true).value_or(false);
+      if (!seen && !streaming)
+        watcher.release();
+      if (seen)
+        last_face = now;
+
+      if (!armed) {
+        // Don't keep the camera (and its LED) on in front of a user who
+        // just locked; probe sparsely until they leave. The lock screen's
+        // own PAM flow still works meanwhile.
+        if (seen)
           watcher.release();
-        // Stay open on a face so verification captures from the same session.
-        const bool seen = watcher.faceVisible(true).value_or(false);
-        if (!seen && !streaming)
-          watcher.release();
-        if (seen && face_cfg.enable) {
-          const auto start = Clock::now();
-          bool ok = false;
-          if (templates.empty()) {
-            watcher.release();  // FaceAuth opens its own sessions
-            ok = fallback.verify();
-          } else {
-            std::string detail;
-            ok = ir.verify(templates, opt.ir_timeout_ms, detail, watcher.camera());
-            log("%s", detail.c_str());
-          }
-          watcher.release();  // let the lock screen's own biopass PAM grab it
-          const long ms = std::chrono::duration_cast<milliseconds>(Clock::now() - start).count();
-          if (ok && unlockSession()) {
-            log("verified in %ld ms; unlocked", ms);
-            wake.tap();  // turn the display back on
-            // The lock screen takes a moment to go away; don't re-verify.
-            next_locked_probe = Clock::now() + seconds(10);
-          } else {
-            log("face seen but verification failed (%ld ms)", ms);
-            next_locked_probe = Clock::now() + seconds(opt.retry_after_fail_s);
-          }
+        next_locked_probe = now + milliseconds(opt.sparse_period_ms);
+        if (now - last_face >= seconds(opt.rearm_s)) {
+          armed = true;
+          log("no face for %ds; auto-unlock armed", opt.rearm_s);
         }
+        continue;
+      }
+      if (!seen || !face_cfg.enable)
+        continue;
+
+      const auto start = Clock::now();
+      bool ok = false;
+      if (templates.empty()) {
+        watcher.release();  // FaceAuth opens its own sessions
+        ok = fallback.verify();
+      } else {
+        std::string detail;
+        ok = ir.verify(templates, opt.ir_timeout_ms, detail, watcher.camera());
+        log("%s", detail.c_str());
+      }
+      watcher.release();  // let the lock screen's own biopass PAM grab it
+      const long ms = std::chrono::duration_cast<milliseconds>(Clock::now() - start).count();
+      if (ok && unlockSession()) {
+        log("verified in %ld ms; unlocked", ms);
+        wake.tap();  // turn the display back on
+        // The lock screen takes a moment to go away; don't re-verify.
+        next_locked_probe = Clock::now() + seconds(10);
+      } else {
+        log("face seen but verification failed (%ld ms)", ms);
+        next_locked_probe = Clock::now() + seconds(opt.retry_after_fail_s);
       }
       continue;
     }
 
-    if (state == State::Locked)
+    if (state == State::Locked) {
       log("unlocked");
+      state = State::Active;
+    }
+    if (state == State::Locking) {
+      if (now - lock_requested < seconds(10))
+        continue;
+      log("lock request not honoured; watching again");
+      state = State::Watching;
+      last_face = now;
+    }
     if (!idle.idle) {
       if (state == State::Watching) {
         watcher.release();
@@ -470,6 +511,7 @@ int main(int argc, char** argv) {
     if (state != State::Watching) {
       state = State::Watching;
       last_face = now;
+      was_seen = true;
       log("idle; watching for presence");
     }
     auto seen = watcher.faceVisible(false);  // sparse: emitter off between probes
@@ -477,7 +519,6 @@ int main(int argc, char** argv) {
       log("camera returned no frame");
     if (seen.value_or(false))
       last_face = now;
-    static bool was_seen = true;
     if (seen && *seen != was_seen) {
       was_seen = *seen;
       log(was_seen ? "face present" : "face absent");
@@ -485,7 +526,10 @@ int main(int argc, char** argv) {
     if (now - last_face >= seconds(opt.absent_s)) {
       log("no face for %ds; locking", opt.absent_s);
       watcher.release();
-      bus.call("Lock");
+      if (bus.call("Lock")) {
+        state = State::Locking;
+        lock_requested = now;
+      }
     }
   }
 }
