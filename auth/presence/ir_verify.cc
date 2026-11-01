@@ -88,7 +88,7 @@ bool IrVerifier::session(int timeout_ms, const std::function<bool(const IrFrameR
     if (!owned)
       return false;
     camera = owned.get();
-    for (int i = 0; i < 4; ++i) camera->capture();  // let exposure settle
+    for (int i = 0; i < 4; ++i) camera->nextFrame();  // let exposure settle
   }
   PairStats local;
   if (!stats)
@@ -96,8 +96,8 @@ bool IrVerifier::session(int timeout_ms, const std::function<bool(const IrFrameR
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
   while (Clock::now() < deadline) {
     // Back-to-back captures so the pair is adjacent; inference happens after.
-    ImageRGB a = camera->capture();
-    ImageRGB b = camera->capture();
+    ImageRGB a = camera->nextFrame();
+    ImageRGB b = camera->nextFrame();
     if (a.empty() || b.empty())
       return false;
     const double ma = frameMean(a), mb = frameMean(b);

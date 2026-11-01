@@ -241,8 +241,8 @@ class Watcher {
       : opt_(opt), detector_(std::move(detector)) {}
 
   // Watches through the IR camera so presence works in the dark and the
-  // colour camera (and its LED) stays off. The emitter blinks every other
-  // frame, so grab two frames and detect on the brighter one.
+  // colour camera (and its LED) stays off. A grey capture() already keeps
+  // the brightest of several fresh frames, i.e. one lit by the emitter.
   // Returns nullopt if the camera could not deliver a frame.
   std::optional<bool> faceVisible(bool keep_open) {
     if (!session_) {
@@ -251,15 +251,14 @@ class Watcher {
                                             0, 3000);
       if (!session_)
         return std::nullopt;
-      for (int i = 0; i < 4; ++i) session_->capture();  // let exposure settle
+      for (int i = 0; i < 4; ++i) session_->nextFrame();  // let exposure settle
     }
-    ImageRGB a = session_->capture();
-    ImageRGB b = session_->capture();
+    ImageRGB frame = session_->capture();
     if (!keep_open)
       session_.reset();
-    if (a.empty() || b.empty())
+    if (frame.empty())
       return std::nullopt;
-    return !detector_->inference(mean(a) >= mean(b) ? a : b).empty();
+    return !detector_->inference(frame).empty();
   }
 
   void release() { session_.reset(); }
@@ -270,12 +269,6 @@ class Watcher {
   const Options& opt_;
   std::shared_ptr<biopass::FaceDetection> detector_;
   std::unique_ptr<biopass::ICameraCaptureSession> session_;
-
-  static double mean(const ImageRGB& image) {
-    double sum = 0;
-    for (size_t i = 0; i < image.data.size(); i += 3) sum += image.data[i];
-    return image.data.empty() ? 0 : sum * 3 / image.data.size();
-  }
 };
 
 }  // namespace
