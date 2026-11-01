@@ -1,0 +1,7 @@
+VERS_1.19.2 {
+  global: OrtGetApiBase; OrtSessionOptionsAppendExecutionProvider_CPU;
+};
+VERS_1.30.0 {
+  global: OrtGetApiBase; OrtSessionOptionsAppendExecutionProvider_CPU;
+  local: *;
+} VERS_1.19.2;
