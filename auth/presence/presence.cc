@@ -262,6 +262,8 @@ class Watcher {
   }
 
   void release() { session_.reset(); }
+  // The open IR session, if any, for verification to capture from.
+  biopass::ICameraCaptureSession* camera() { return session_.get(); }
 
  private:
   const Options& opt_;
@@ -423,17 +425,22 @@ int main(int argc, char** argv) {
             now + milliseconds(streaming ? opt.locked_period_ms : opt.sparse_period_ms);
         if (!streaming)
           watcher.release();
-        if (watcher.faceVisible(streaming).value_or(false) && face_cfg.enable) {
-          watcher.release();  // IR verification opens its own session
+        // Stay open on a face so verification captures from the same session.
+        const bool seen = watcher.faceVisible(true).value_or(false);
+        if (!seen && !streaming)
+          watcher.release();
+        if (seen && face_cfg.enable) {
           const auto start = Clock::now();
           bool ok = false;
           if (templates.empty()) {
+            watcher.release();  // FaceAuth opens its own sessions
             ok = fallback.verify();
           } else {
             std::string detail;
-            ok = ir.verify(templates, opt.ir_timeout_ms, detail);
+            ok = ir.verify(templates, opt.ir_timeout_ms, detail, watcher.camera());
             log("%s", detail.c_str());
           }
+          watcher.release();  // let the lock screen's own biopass PAM grab it
           const long ms = std::chrono::duration_cast<milliseconds>(Clock::now() - start).count();
           if (ok && unlockSession()) {
             log("verified in %ld ms; unlocked", ms);

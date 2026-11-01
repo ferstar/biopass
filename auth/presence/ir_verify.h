@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "camera_capture.h"
 #include "face_detection.h"
 #include "face_recognition.h"
 
@@ -39,9 +40,11 @@ class IrVerifier {
   IrVerifier(IrOptions options, std::shared_ptr<biopass::FaceDetection> detector,
              std::shared_ptr<biopass::FaceRecognition> recognizer);
 
-
-  // True once `needed_matches` live IR faces match any template.
-  bool verify(const std::vector<Embedding>& templates, int timeout_ms, std::string& detail);
+  // True once `needed_matches` live IR faces match any template. `camera`
+  // reuses an open IR session: reopening powers the camera down, which resets
+  // the emitter control.
+  bool verify(const std::vector<Embedding>& templates, int timeout_ms, std::string& detail,
+              biopass::ICameraCaptureSession* camera = nullptr);
 
   // Live IR embeddings for enrollment (crops returned for inspection).
   std::vector<IrFrameResult> collect(int wanted, int timeout_ms);
@@ -49,7 +52,13 @@ class IrVerifier {
   static float cosine(const Embedding& a, const Embedding& b);
 
  private:
-  bool session(int timeout_ms, const std::function<bool(const IrFrameResult&)>& sink);
+  // Counts frame pairs, and those where the emitter toggled, into the stats.
+  struct PairStats {
+    int pairs = 0;
+    int toggled = 0;
+  };
+  bool session(int timeout_ms, const std::function<bool(const IrFrameResult&)>& sink,
+               biopass::ICameraCaptureSession* camera = nullptr, PairStats* stats = nullptr);
   IrFrameResult analyse(const ImageRGB& lit, const ImageRGB& dark);
 
   IrOptions options_;
