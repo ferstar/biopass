@@ -40,7 +40,9 @@ fn video_device_sort_key(path: &str) -> i32 {
 fn stable_video_path(node: &str) -> String {
     let target = fs::canonicalize(node).unwrap_or_else(|_| node.into());
     for dir in ["/dev/v4l/by-path", "/dev/v4l/by-id"] {
-        let Ok(entries) = fs::read_dir(dir) else { continue };
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
         let mut aliases: Vec<_> = entries
             .flatten()
             .map(|entry| entry.path())
@@ -52,6 +54,16 @@ fn stable_video_path(node: &str) -> String {
         }
     }
     node.to_string()
+}
+
+/// Short form of a device path for the picker: the port part of a by-path
+/// alias ("usb-0:1:1.2-video-index0"), else the alias or node file name.
+fn device_label(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    match file.find("usb-") {
+        Some(start) => file[start..].to_string(),
+        None => file.to_string(),
+    }
 }
 
 #[tauri::command]
@@ -71,10 +83,11 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
         let name = fs::read_to_string(format!("/sys/class/video4linux/{}/name", file_name))
             .map(|value| value.trim().to_string())
             .unwrap_or_default();
+        let label = device_label(&path);
         let display_name = if name.is_empty() {
-            node.clone()
+            label
         } else {
-            format!("{} ({})", name, node)
+            format!("{} ({})", name, label)
         };
 
         devices.push(VideoDeviceInfo {
@@ -92,7 +105,20 @@ pub fn list_video_devices() -> Result<Vec<VideoDeviceInfo>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{username_from, video_device_sort_key};
+    use super::{device_label, username_from, video_device_sort_key};
+
+    #[test]
+    fn device_label_keeps_the_usb_port_part() {
+        assert_eq!(
+            device_label("/dev/v4l/by-path/pci-0000:65:00.4-usb-0:1:1.2-video-index0"),
+            "usb-0:1:1.2-video-index0"
+        );
+        assert_eq!(
+            device_label("/dev/v4l/by-id/usb-Cam_123-video-index0"),
+            "usb-Cam_123-video-index0"
+        );
+        assert_eq!(device_label("/dev/video2"), "video2");
+    }
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
